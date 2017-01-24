@@ -1,5 +1,24 @@
+﻿# -*- coding: utf-8 -*-
+
+
+"""A Python implemntation of a kd-tree
+
+This package provides a simple implementation of a kd-tree in Python.
+https://en.wikipedia.org/wiki/K-d_tree
+"""
+
+from __future__ import print_function
+
+import operator
 import math
 from collections import deque
+from functools import wraps
+from bounded_priority_queue import BoundedPriorityQueue
+
+__author__ = u'Stefan Kögl <stefan@skoegl.net>'
+__version__ = '0.15'
+__website__ = 'https://github.com/stefankoegl/kdtree'
+__license__ = 'ISC license'
 
 
 class Node(object):
@@ -152,22 +171,27 @@ class Node(object):
     def __nonzero__(self):
         return self.data is not None
 
+    __bool__ = __nonzero__
+
     def __eq__(self, other):
         if isinstance(other, tuple):
             return self.data == other
         else:
             return self.data == other.data
 
+    def __hash__(self):
+        return id(self)
 
 
 def require_axis(f):
     """ Check if the object of the function has axis and sel_axis members """
 
+    @wraps(f)
     def _wrapper(self, *args, **kwargs):
         if None in (self.axis, self.sel_axis):
             raise ValueError('%(func_name) requires the node %(node)s '
                     'to have an axis and a sel_axis function' %
-                    dict(func_name=f.func_name, node=repr(self)))
+                    dict(func_name=f.__name__, node=repr(self)))
 
         return f(self, *args, **kwargs)
 
@@ -189,7 +213,6 @@ class KDNode(Node):
         sel_axis(axis) is used when creating subnodes of the current node. It
         receives the axis of the parent node and returns the axis of the child
         node. """
-
         super(KDNode, self).__init__(data, left, right)
         self.axis = axis
         self.sel_axis = sel_axis
@@ -199,31 +222,34 @@ class KDNode(Node):
     @require_axis
     def add(self, point):
         """
-        Adds a point to the current node or recursively
+        Adds a point to the current node or iteratively
         descends to one of its children.
 
         Users should call add() only to the topmost tree.
         """
 
-        check_dimensionality([point], dimensions=self.dimensions)
+        current = self
+        while True:
+            check_dimensionality([point], dimensions=current.dimensions)
 
-        # Adding has hit an empty leaf-node, add here
-        if self.data is None:
-            self.data = point
-            return
+            # Adding has hit an empty leaf-node, add here
+            if current.data is None:
+                current.data = point
+                return current
 
-        # split on self.axis, recurse either left or right
-        if point[self.axis] < self.data[self.axis]:
-            if self.left is None:
-                self.left = self.create_subnode(point)
+            # split on self.axis, recurse either left or right
+            if point[current.axis] < current.data[current.axis]:
+                if current.left is None:
+                    current.left = current.create_subnode(point)
+                    return current.left
+                else:
+                    current = current.left
             else:
-                self.left.add(point)
-
-        else:
-            if self.right is None:
-                self.right = self.create_subnode(point)
-            else:
-                self.right.add(point)
+                if current.right is None:
+                    current.right = current.create_subnode(point)
+                    return current.right
+                else:
+                    current = current.right
 
 
     @require_axis
@@ -251,77 +277,81 @@ class KDNode(Node):
         return (child, parent if parent is not None else self)
 
 
+    def should_remove(self, point, node):
+        """ checks if self's point (and maybe identity) matches """
+        if not self.data == point:
+            return False
+
+        return (node is None) or (node is self)
+
 
     @require_axis
-    def remove(self, point):
+    def remove(self, point, node=None):
         """ Removes the node with the given point from the tree
 
-        Returns the new root node of the (sub)tree """
+        Returns the new root node of the (sub)tree.
+
+        If there are multiple points matching "point", only one is removed. The
+        optional "node" parameter is used for checking the identity, once the
+        removeal candidate is decided."""
 
         # Recursion has reached an empty leaf node, nothing here to delete
         if not self:
             return
 
-
         # Recursion has reached the node to be deleted
-        if self.data == point:
-
-            if self.is_leaf:
-                self.data = None
-                return self
-
-            else:
-                # find a replacement for the node (will be the new subtree-root)
-                root, max_p = self.find_replacement()
-
-                pos = max_p.get_child_pos(root)
-
-                # self and root swap positions
-                tmp_l, tmp_r = self.left, self.right
-                self.left, self.right = root.left, root.right
-                root.left, root.right = tmp_l if tmp_l is not root else self, tmp_r if tmp_r is not root else self
-                self.axis, root.axis = root.axis, self.axis
-
-
-                # Special-case if we have chosen a direct child as the replacement
-                if max_p is not self:
-                    max_p.set_child(pos, self)
-                    new_depth = max_p.height()
-                    max_p.remove(self.data)
-
-                else:
-                    root.remove(self.data)
-
-                return root
-
+        if self.should_remove(point, node):
+            return self._remove(point)
 
         # Remove direct subnode
-        if self.left and self.left.data == point:
-            if self.left.is_leaf:
-                self.left = None
+        if self.left and self.left.should_remove(point, node):
+            self.left = self.left._remove(point)
 
-            else:
-                self.left = self.left.remove(point)
-
-
-        elif self.right and self.right.data == point:
-            if self.right.is_leaf:
-                self.right = None
-
-            else:
-                self.right = self.right.remove(point)
-
+        elif self.right and self.right.should_remove(point, node):
+            self.right = self.right._remove(point)
 
         # Recurse to subtrees
         if point[self.axis] <= self.data[self.axis]:
             if self.left:
-                self.left = self.left.remove(point)
+                self.left = self.left.remove(point, node)
 
         if point[self.axis] >= self.data[self.axis]:
             if self.right:
-                self.right = self.right.remove(point)
+                self.right = self.right.remove(point, node)
 
         return self
+
+
+    @require_axis
+    def _remove(self, point):
+        # we have reached the node to be deleted here
+
+        # deleting a leaf node is trivial
+        if self.is_leaf:
+            self.data = None
+            return self
+
+        # we have to delete a non-leaf node here
+
+        # find a replacement for the node (will be the new subtree-root)
+        root, max_p = self.find_replacement()
+
+        # self and root swap positions
+        tmp_l, tmp_r = self.left, self.right
+        self.left, self.right = root.left, root.right
+        root.left, root.right = tmp_l if tmp_l is not root else self, tmp_r if tmp_r is not root else self
+        self.axis, root.axis = root.axis, self.axis
+
+        # Special-case if we have not chosen a direct child as the replacement
+        if max_p is not self:
+            pos = max_p.get_child_pos(root)
+            max_p.set_child(pos, self)
+            max_p.remove(point, self)
+
+        else:
+            root.remove(point, self)
+
+        return root
 
 
     @property
@@ -361,39 +391,97 @@ class KDNode(Node):
         Squared distance between the current Node
         and the given point
         """
-        r = range(len(self.data))
+        r = range(self.dimensions)
         return sum([self.axis_dist(point, i) for i in r])
 
 
+    def search_knn(self, point, k, dist=None):
+        """ Return the k nearest neighbors of point and their distances
+
+        point must be an actual point, not a node.
+
+        k is the number of results to return. The actual results can be less
+        (if there aren't more nodes to return) or more in case of equal
+        distances.
+
+        dist is a distance function, expecting two points and returning a
+        distance value. Distance values can be any compareable type.
+
+        The result is an ordered list of (node, distance) tuples.
+        """
+
+        if dist is None:
+            get_dist = lambda n: n.dist(point)
+        else:
+            get_dist = lambda n: dist(n.data, point)
+
+        results = BoundedPriorityQueue(k)
+
+        self._search_node(point, k, results, get_dist)
+
+        # We sort the final result by the distance in the tuple
+        # (<KdNode>, distance)
+        BY_VALUE = lambda kv: kv[1]
+        return sorted(results.items(), key=BY_VALUE)
+
+
+    def _search_node(self, point, k, results, get_dist):
+        if not self:
+            return
+
+        nodeDist = get_dist(self)
+
+        # Add current node to the priority queue if it closer than
+        # at least one point in the queue. This functionality is
+        # taken care of by BoundedPriorityQueue.
+        results.add((self, nodeDist))
+
+        # get the splitting plane
+        split_plane = self.data[self.axis]
+        # get the squared distance between the point and the splitting plane
+        # (squared since all distances are squared).
+        plane_dist = point[self.axis] - split_plane
+        plane_dist2 = plane_dist * plane_dist
+
+        # Search the side of the splitting plane that the point is in
+        if point[self.axis] < split_plane:
+            if self.left is not None:
+                self.left._search_node(point, k, results, get_dist)
+        else:
+            if self.right is not None:
+                self.right._search_node(point, k, results, get_dist)
+
+        # Search the other side of the splitting plane if it may contain
+        # points closer than the farthest point in the current results.
+        if plane_dist2 < results.max() or results.size() < k:
+            if point[self.axis] < self.data[self.axis]:
+                if self.right is not None:
+                    self.right._search_node(point, k, results, get_dist)
+            else:
+                if self.left is not None:
+                    self.left._search_node(point, k, results, get_dist)
+
+
     @require_axis
-    def search_nn(self, point, best=None):
+    def search_nn(self, point, dist=None):
         """
         Search the nearest node of the given point
 
-        point must be a location, not a node. The nearest node to the point is
-        returned. If a location of an actual node is used, the Node with this
-        location will be retuend (not its neighbor) """
+        point must be an actual point, not a node. The nearest node to the
+        point is returned. If a location of an actual node is used, the Node
+        with this location will be returned (not its neighbor).
 
-        if best is None:
-            best = self
+        dist is a distance function, expecting two points and returning a
+        distance value. Distance values can be any compareable type.
 
-        # consider the current node
-        if self.dist(point) < best.dist(point):
-            best = self
+        The result is a (node, distance) tuple.
+        """
 
-        # sort the children, nearer one first
-        children = sorted(self.children, key=lambda (c, p): c.dist(point))
-
-        for child, p in children:
-            # check if node needs to be recursed
-            if self.axis_dist(point, self.axis) < best.dist(point):
-                best = child.search_nn(point, best)
-
-        return best
+        return next(iter(self.search_knn(point, 1, dist)), None)
 
 
     @require_axis
-    def search_nn_dist(self, point, distance, best=[]):
+    def search_nn_dist(self, point, distance, best=None):
         """
         Search the n nearest nodes of the given point which are within given
         distance
@@ -402,16 +490,19 @@ class KDNode(Node):
         nodes to the point within the distance will be returned.
         """
 
+        if best is None:
+            best = []
+
         # consider the current node
         if self.dist(point) < distance:
             best.append(self)
 
         # sort the children, nearer one first (is this really necessairy?)
-        children = sorted(self.children, key=lambda (c, p): c.dist(point))
+        children = sorted(self.children, key=lambda c_p1: c_p1[0].dist(point))
 
         for child, p in children:
             # check if child node needs to be recursed
-            if self.axis_dist(point, self.axis) < distance:
+            if self.axis_dist(point, self.axis) < math.pow(distance, 2):
                 child.search_nn_dist(point, distance, best)
 
         return best
@@ -441,7 +532,7 @@ class KDNode(Node):
         The child is selected by sel_func which is either min or max
         (or a different function with similar semantics). """
 
-        max_key = lambda (child, parent): child.data[axis]
+        max_key = lambda child_parent: child_parent[0].data[axis]
 
 
         # we don't know our parent, so we include None
@@ -460,7 +551,7 @@ class KDNode(Node):
 
 
 
-def create(point_list=[], dimensions=None, axis=0, sel_axis=None):
+def create(point_list=None, dimensions=None, axis=0, sel_axis=None):
     """ Creates a kd-tree from a list of points
 
     All points in the list must be of the same dimensionality.
@@ -488,13 +579,14 @@ def create(point_list=[], dimensions=None, axis=0, sel_axis=None):
         return KDNode(sel_axis=sel_axis, axis=axis, dimensions=dimensions)
 
     # Sort point list and choose median as pivot element
+    point_list = list(point_list)
     point_list.sort(key=lambda point: point[axis])
     median = len(point_list) // 2
 
     loc   = point_list[median]
     left  = create(point_list[:median], dimensions, sel_axis(axis))
     right = create(point_list[median + 1:], dimensions, sel_axis(axis))
-    return KDNode(loc, left, right, axis=axis, sel_axis=sel_axis)
+    return KDNode(loc, left, right, axis=axis, sel_axis=sel_axis, dimensions=dimensions)
 
 
 def check_dimensionality(point_list, dimensions=None):
@@ -540,14 +632,14 @@ def visualize(tree, max_level=100, node_width=10, left_padding=5):
     for node in level_order(tree, include_all=True):
 
         if in_level == 0:
-            print
-            print
-            print ' '*left_padding,
+            print()
+            print()
+            print(' '*left_padding, end=' ')
 
         width = int(max_width*node_width/per_level)
 
         node_str = (str(node.data) if node else '').center(width)
-        print node_str,
+        print(node_str, end=' ')
 
         in_level += 1
 
@@ -559,5 +651,5 @@ def visualize(tree, max_level=100, node_width=10, left_padding=5):
         if level > height:
             break
 
-    print
-    print
+    print()
+    print()

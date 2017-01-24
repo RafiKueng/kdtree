@@ -1,19 +1,18 @@
-A simple kd-tree in Python [![Build Status](https://travis-ci.org/stefankoegl/kdtree.png?branch=master)](https://travis-ci.org/stefankoegl/kdtree)
-==========================
+.. python-kdtree documentation master file, created by
+   sphinx-quickstart on Sat Mar 22 15:55:01 2014.
+   You can adapt this file completely to your liking, but it should at least
+   contain the root `toctree` directive.
 
-The kdtree package can construct, modify and search
-[kd-trees](http://en.wikipedia.org/wiki/Kd-tree).
+python-kdtree
+=============
 
-* Website: https://github.com/stefankoegl/kdtree
-* Repository: https://github.com/stefankoegl/kdtree.git
-* Documentation: https://python-kdtree.readthedocs.org/
-* PyPI: https://pypi.python.org/pypi/kdtree
-* Travis-CI: https://travis-ci.org/stefankoegl/kdtree
-* Coveralls: https://coveralls.io/r/stefankoegl/kdtree
+The ``kdtree`` package can construct, modify and search `kd-trees
+<http://en.wikipedia.org/wiki/K-d_tree>`_.
 
+Example Usage
+-------------
 
-Usage
------
+.. code-block:: python
 
     >>> import kdtree
 
@@ -121,3 +120,16 @@ Usage
                [4, 5, 6]            (6, 1, 5)
 
           (2, 3, 4)
+
+
+.. toctree::
+   :maxdepth: 2
+
+
+Indices and tables
+==================
+
+* :ref:`genindex`
+* :ref:`modindex`
+* :ref:`search`
+
